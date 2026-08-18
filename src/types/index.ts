@@ -3,13 +3,36 @@ export interface DashboardStats {
   todayRequests: number;
   todayTokens: number;
   activeChannels: number;
-  avgLatency: number; // ms
+  avgLatency: number;
   totalRequests: number;
   totalTokens: number;
+  errorRate: number;
+}
+
+export interface RecentActivity {
+  id: string;
+  model: string;
+  channelName: string | null;
+  statusCode: number;
+  totalTokens: number;
+  durationMs: number;
+  createdAt: string;
+}
+
+export interface DashboardResponse {
+  stats: DashboardStats;
+  recentActivities: RecentActivity[];
 }
 
 // ==================== Channel ====================
-export type ChannelType = "openai" | "deepseek" | "claude" | "gemini";
+export type ChannelType = "openai" | "deepseek" | "claude" | "gemini" | "dashscope" | "custom";
+
+/** 渠道类型默认配置——后端 get_channel_defaults 返回，供创建渠道表单自动填充 */
+export interface ChannelDefaults {
+  channelType: ChannelType;
+  baseUrl: string;
+  models: string[];
+}
 
 export interface Channel {
   id: string;
@@ -17,13 +40,16 @@ export interface Channel {
   type: ChannelType;
   baseUrl: string;
   apiKey: string;
-  models: string[];
-  isActive: boolean;
+  models: string; // JSON string
+  status: number; // 1=enabled, 0=disabled
+  priority: number;
   weight: number;
-  maxRetries: number;
-  timeout: number; // ms
+  config: string; // JSON string
+  modelMapping: string; // JSON string
   createdAt: string;
   updatedAt: string;
+  lastTestAt?: string;
+  lastTestOk?: boolean;
 }
 
 export interface ChannelFormData {
@@ -31,10 +57,12 @@ export interface ChannelFormData {
   type: ChannelType;
   baseUrl: string;
   apiKey: string;
-  models: string[];
-  weight: number;
-  maxRetries: number;
-  timeout: number;
+  models?: string;
+  status?: number;
+  priority?: number;
+  weight?: number;
+  config?: string;
+  modelMapping?: string;
 }
 
 export interface ChannelTestResult {
@@ -44,19 +72,18 @@ export interface ChannelTestResult {
 }
 
 // ==================== API Key ====================
-export type ApiKeyStatus = "active" | "disabled" | "expired";
-
 export interface ApiKey {
   id: string;
   name: string;
   key: string; // sk-aio-*
-  status: ApiKeyStatus;
+  status: number; // 1=active, 0=disabled
   quotaLimit: number; // -1 means unlimited
   quotaUsed: number;
-  allowedModels: string[];
-  allowedChannels: string[];
+  allowedModels: string; // JSON string
+  allowedChannels: string; // JSON string
   createdAt: string;
   expiresAt: string | null;
+  updatedAt: string;
 }
 
 export interface ApiKeyFormData {
@@ -68,32 +95,47 @@ export interface ApiKeyFormData {
 }
 
 // ==================== Log ====================
-export type LogStatus = "success" | "error" | "pending";
 
 export interface RequestLog {
   id: string;
-  timestamp: string;
-  method: string;
-  path: string;
-  status: LogStatus;
-  statusCode: number;
-  latency: number; // ms
-  channelName: string;
-  channelType: ChannelType;
+  apiKeyId: string | null;
+  apiKeyName: string | null;
+  channelId: string | null;
+  channelName: string | null;
   model: string;
-  apiKeyName: string;
-  tokenUsage: number;
-  requestBody: string;
-  responseBody: string;
-  errorMessage?: string;
+  upstreamModel: string | null;
+  mode: string;
+  statusCode: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  durationMs: number;
+  errorMessage: string | null;
+  isStream: boolean;
+  isRetry: boolean;
+  createdAt: string;
+  requestBody: string | null;
+  responseBody: string | null;
+}
+
+export interface PaginatedResult<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 }
 
 export interface LogFilter {
   keyword: string;
-  channelType: ChannelType | "";
+  channelId: string;
   model: string;
-  status: LogStatus | "";
-  dateRange: [string, string] | null;
+  statusCode: number | "";
+  isStream: boolean | "";
+  startTime: string | null;
+  endTime: string | null;
+  page: number;
+  pageSize: number;
 }
 
 // ==================== Settings ====================
@@ -124,11 +166,27 @@ export interface RetryPolicy {
   maxDelay: number;
 }
 
+export type SecurityMode = "audit" | "warn" | "redact" | "confirm" | "block";
+
+export interface SecuritySettings {
+  enabled: boolean;
+  mode: SecurityMode;
+  scanRequest: boolean;
+  scanResponse: boolean;
+  scanUnicode: boolean;
+  scanTools: boolean;
+  scanNetwork: boolean;
+  redactSecrets: boolean;
+  blockOnCritical: boolean;
+  maxScanBytes: number;
+}
+
 export interface AppSettings {
   service: ServiceConfig;
   general: GeneralSettings;
   ui: UISettings;
   retry: RetryPolicy;
+  security: SecuritySettings;
 }
 
 // ==================== Usage ====================
@@ -139,8 +197,8 @@ export interface UsageDataPoint {
 }
 
 export interface ChannelUsage {
-  channelName: string;
-  channelType: ChannelType;
+  channelName: string | null;
+  channelType: string;
   requests: number;
   tokens: number;
   percentage: number;

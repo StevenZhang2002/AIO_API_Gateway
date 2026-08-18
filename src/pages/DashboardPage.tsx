@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Zap, Activity, Globe, Timer, TrendingUp, ArrowUpRight, Clock } from "lucide-react";
+import { Zap, Activity, Globe, Timer, TrendingUp, Clock } from "lucide-react";
 import { fetchDashboardStats } from "../lib/api";
-import type { DashboardStats } from "../types";
+import type { DashboardResponse, RecentActivity } from "../types";
 
 function formatNumber(n: number): string {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
@@ -9,42 +9,24 @@ function formatNumber(n: number): string {
   return n.toLocaleString();
 }
 
-function Sparkline({ data, color, height = 36 }: { data: number[]; color: string; height?: number }) {
-  const width = 80;
-  const max = Math.max(...data, 1);
-  const min = Math.min(...data, 0);
-  const range = max - min || 1;
-  const points = data
-    .map((v, i) => {
-      const x = (i / (data.length - 1)) * width;
-      const y = height - ((v - min) / range) * (height - 4) - 2;
-      return `${x},${y}`;
-    })
-    .join(" ");
-  const areaPoints = `0,${height} ${points} ${width},${height}`;
-
-  return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ flexShrink: 0 }} aria-hidden="true">
-      <defs>
-        <linearGradient id={`sparkGrad-${color.replace("#", "")}`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.25" />
-          <stop offset="100%" stopColor={color} stopOpacity="0.02" />
-        </linearGradient>
-      </defs>
-      <polygon points={areaPoints} fill={`url(#sparkGrad-${color.replace("#", "")})`} />
-      <polyline points={points} fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
+function formatRelativeTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return "刚刚";
+  if (diffMin < 60) return `${diffMin} 分钟前`;
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffHour < 24) return `${diffHour} 小时前`;
+  const diffDay = Math.floor(diffHour / 24);
+  return `${diffDay} 天前`;
 }
 
-function genSparkData(seed: number, count = 10): number[] {
-  const data: number[] = [];
-  let v = 50 + (seed % 30);
-  for (let i = 0; i < count; i++) {
-    v = Math.max(5, Math.min(100, v + (Math.sin(i * 1.3 + seed) * 8 + (Math.random() - 0.5) * 12)));
-    data.push(Math.round(v));
-  }
-  return data;
+function getActivityText(item: RecentActivity): string {
+  const channel = item.channelName || "未知渠道";
+  const isSuccess = item.statusCode >= 200 && item.statusCode < 400;
+  const action = isSuccess ? "完成请求" : "请求失败";
+  return `${channel} 渠道通过 ${item.model} ${action}`;
 }
 
 const statCards = [
@@ -54,21 +36,13 @@ const statCards = [
   { key: "avgLatency", label: "平均延迟", icon: Timer, color: "#f59e0b", cls: "stat-card-warning" },
 ] as const;
 
-const recentActivity = [
-  { time: "2 分钟前", text: "OpenAI Primary 渠道通过 gpt-4o 完成请求", status: "success" },
-  { time: "8 分钟前", text: "DeepSeek Main 渠道通过 deepseek-chat 完成请求", status: "success" },
-  { time: "15 分钟前", text: "Claude Enterprise 连接超时，已重试成功", status: "warning" },
-  { time: "28 分钟前", text: "新 API 密钥 Test Key 被创建", status: "info" },
-  { time: "42 分钟前", text: "Gemini-Pro 渠道已被禁用", status: "warning" },
-];
-
 export default function DashboardPage() {
-  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [data, setData] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchDashboardStats().then((data) => {
-      setStats(data);
+    fetchDashboardStats().then((res) => {
+      setData(res);
       setLoading(false);
     });
   }, []);
@@ -93,11 +67,14 @@ export default function DashboardPage() {
     );
   }
 
+  const stats = data!.stats;
+  const recentActivities = data!.recentActivities;
+
   const values: Record<string, string> = {
-    todayRequests: formatNumber(stats!.todayRequests),
-    todayTokens: formatNumber(stats!.todayTokens),
-    activeChannels: stats!.activeChannels.toString(),
-    avgLatency: stats!.avgLatency + "ms",
+    todayRequests: formatNumber(stats.todayRequests),
+    todayTokens: formatNumber(stats.todayTokens),
+    activeChannels: stats.activeChannels.toString(),
+    avgLatency: stats.avgLatency + "ms",
   };
 
   return (
@@ -117,7 +94,7 @@ export default function DashboardPage() {
 
       {/* Stat Cards */}
       <div className="grid grid-responsive-4 grid-gap-sm mb-6 stagger-children">
-        {statCards.map(({ key, label, icon: Icon, color, cls }, idx) => (
+        {statCards.map(({ key, label, icon: Icon, color, cls }) => (
           <div key={key} className={`stat-card ${cls} card-lift`}>
             <div className="flex items-start justify-between mb-4">
               <div
@@ -127,7 +104,6 @@ export default function DashboardPage() {
               >
                 <Icon size={22} aria-hidden="true" />
               </div>
-              <Sparkline data={genSparkData(idx)} color={color} />
             </div>
             <div>
               <p className="text-13 text-ink-soft font-medium mb-1">{label}</p>
@@ -139,11 +115,6 @@ export default function DashboardPage() {
                   <span style={{ fontSize: 12, color: "var(--ink-subtle)", fontWeight: 500 }}>P50</span>
                 )}
               </div>
-            </div>
-            <div className="flex items-center gap-1 mt-3" style={{ fontSize: 12, color: "var(--success)", fontWeight: 500 }}>
-              <ArrowUpRight size={13} aria-hidden="true" />
-              <span>+12.5%</span>
-              <span style={{ color: "var(--ink-subtle)", fontWeight: 400, marginLeft: 4 }}>vs 昨日</span>
             </div>
           </div>
         ))}
@@ -161,7 +132,7 @@ export default function DashboardPage() {
               <h3 className="text-15 font-semibold text-ink">累计请求数</h3>
             </div>
             <p className="text-36 font-bold text-ink tracking-tight leading-none mb-1 tabular-nums">
-              {formatNumber(stats!.totalRequests)}
+              {formatNumber(stats.totalRequests)}
             </p>
             <p className="text-13 text-ink-soft">自服务启动以来</p>
           </div>
@@ -173,7 +144,7 @@ export default function DashboardPage() {
               <h3 className="text-15 font-semibold text-ink">累计 Token 消耗</h3>
             </div>
             <p className="text-36 font-bold text-ink tracking-tight leading-none mb-1 tabular-nums">
-              {formatNumber(stats!.totalTokens)}
+              {formatNumber(stats.totalTokens)}
             </p>
             <p className="text-13 text-ink-soft">自服务启动以来</p>
           </div>
@@ -186,10 +157,10 @@ export default function DashboardPage() {
             </h3>
             <div className="dashboard-health-grid">
               {[
-                { label: "CPU", value: "23%", color: "var(--success)" },
-                { label: "内存", value: "1.2 GB", color: "var(--info)" },
-                { label: "运行时间", value: "14d 6h", color: "var(--success)" },
-                { label: "错误率", value: "0.12%", color: "var(--success)" },
+                { label: "错误率", value: `${stats.errorRate.toFixed(2)}%`, color: stats.errorRate < 1 ? "var(--success)" : "var(--danger)" },
+                { label: "今日请求", value: stats.todayRequests.toString(), color: "var(--info)" },
+                { label: "今日 Token", value: formatNumber(stats.todayTokens), color: "var(--success)" },
+                { label: "活跃渠道", value: stats.activeChannels.toString(), color: "var(--info)" },
               ].map((item) => (
                 <div key={item.label} className="dashboard-health-item">
                   <div className="dashboard-health-dot" style={{ background: item.color }} aria-hidden="true" />
@@ -210,21 +181,28 @@ export default function DashboardPage() {
             最近活动
           </h3>
           <div>
-            {recentActivity.map((item, i) => (
-              <div
-                key={i}
-                className="activity-item"
-                style={i === recentActivity.length - 1 ? { borderBottom: "none" } : undefined}
-              >
-                <div className="activity-dot-wrap">
-                  <div className={`activity-dot activity-dot-${item.status}`} aria-hidden="true" />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <p className="activity-text">{item.text}</p>
-                  <p className="activity-time">{item.time}</p>
-                </div>
-              </div>
-            ))}
+            {recentActivities.length === 0 ? (
+              <p className="text-13 text-ink-soft" style={{ textAlign: "center", padding: "24px 0" }}>暂无活动记录</p>
+            ) : (
+              recentActivities.map((item, i) => {
+                const isSuccess = item.statusCode >= 200 && item.statusCode < 400;
+                return (
+                  <div
+                    key={item.id}
+                    className="activity-item"
+                    style={i === recentActivities.length - 1 ? { borderBottom: "none" } : undefined}
+                  >
+                    <div className="activity-dot-wrap">
+                      <div className={`activity-dot activity-dot-${isSuccess ? "success" : "error"}`} aria-hidden="true" />
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <p className="activity-text">{getActivityText(item)}</p>
+                      <p className="activity-time">{formatRelativeTime(item.createdAt)}</p>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       </div>

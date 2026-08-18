@@ -112,6 +112,8 @@ impl ProxyService {
                 Some(&format!("模型 {} 不在允许列表中", ctx.model)),
                 false,
                 false,
+                Some(&ctx.body),
+                None,
             )
             .await;
             return Err(ProxyError::ModelNotAllowed(ctx.model.clone()));
@@ -132,6 +134,8 @@ impl ProxyService {
                 Some(&reason),
                 false,
                 false,
+                Some(&ctx.body),
+                None,
             )
             .await;
             return Err(ProxyError::Blocked(reason));
@@ -173,6 +177,8 @@ impl ProxyService {
                 Some(&format!("无支持模型 {} 的渠道", ctx.model)),
                 false,
                 false,
+                Some(&ctx.body),
+                None,
             )
             .await;
             return Err(ProxyError::NoAvailableChannel(ctx.model.clone()));
@@ -202,6 +208,8 @@ impl ProxyService {
                                 Some(&reason),
                                 ctx.is_stream,
                                 is_retry,
+                                Some(&ctx.body),
+                                None,
                             )
                             .await;
                             return Err(ProxyError::Blocked(reason));
@@ -226,7 +234,12 @@ impl ProxyService {
                         })
                         .unwrap_or((0, 0, 0));
 
-                    Self::log_request(
+                    let resp_body = match &proxy_result {
+                        ProxyResult::Standard { body, .. } => Some(body),
+                        _ => None,
+                    };
+
+                    let log_id = Self::log_request(
                         pool,
                         &ctx,
                         Some(channel),
@@ -238,6 +251,8 @@ impl ProxyService {
                         None,
                         ctx.is_stream,
                         is_retry,
+                        Some(&ctx.body),
+                        resp_body,
                     )
                     .await;
 
@@ -246,14 +261,25 @@ impl ProxyService {
                         auth::deduct_quota(pool, &ctx.api_key.id, u.total_tokens as i64).await;
                     }
 
-                    // 流式请求：启动后台任务等待用量并扣减配额
+                    // 流式请求：启动后台任务等待用量并扣减配额 + 回写日志
                     if let ProxyResult::Stream { ref mut usage_rx, .. } = proxy_result {
                         if let Some(rx) = usage_rx.take() {
                             let pool = pool.clone();
                             let api_key_id = ctx.api_key.id.clone();
+                            let log_id = log_id.clone();
                             tokio::spawn(async move {
                                 if let Ok(usage) = rx.await {
                                     auth::deduct_quota(&pool, &api_key_id, usage.total_tokens as i64).await;
+                                    // 回写 token 用量到日志记录
+                                    if let Some(ref lid) = log_id {
+                                        let _ = LogRepo::update_usage(
+                                            &pool,
+                                            lid,
+                                            usage.prompt_tokens as i32,
+                                            usage.completion_tokens as i32,
+                                            usage.total_tokens as i32,
+                                        ).await;
+                                    }
                                 }
                             });
                         }
@@ -276,6 +302,8 @@ impl ProxyService {
                         Some(&e.to_string()),
                         ctx.is_stream,
                         is_retry,
+                        Some(&ctx.body),
+                        None,
                     )
                     .await;
                     failed_ids.push(channel.id.clone());
@@ -344,7 +372,7 @@ impl ProxyService {
         }
     }
 
-    /// 记录请求日志
+    /// 记录请求日志，返回日志 ID
     async fn log_request(
         pool: &SqlitePool,
         ctx: &ProxyContext,
@@ -357,7 +385,9 @@ impl ProxyService {
         error_message: Option<&str>,
         is_stream: bool,
         is_retry: bool,
-    ) {
+        request_body: Option<&serde_json::Value>,
+        response_body: Option<&serde_json::Value>,
+    ) -> Option<String> {
         let duration_ms = ctx.started_at.elapsed().as_millis() as i32;
         let dto = CreateLogDto {
             api_key_id: Some(ctx.api_key.id.clone()),
@@ -375,7 +405,9 @@ impl ProxyService {
             error_message: error_message.map(String::from),
             is_stream,
             is_retry,
+            request_body: request_body.map(|v| v.to_string()),
+            response_body: response_body.map(|v| v.to_string()),
         };
-        let _ = LogRepo::create(pool, dto).await;
+        LogRepo::create(pool, dto).await.ok().map(|log| log.id)
     }
 }

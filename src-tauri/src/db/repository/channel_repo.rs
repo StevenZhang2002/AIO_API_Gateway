@@ -92,4 +92,11 @@ impl ChannelRepo {
 
         builder.build_query_as::<Channel>().fetch_one(pool).await
     }
+
+    /// 统计已启用的渠道数量
+    pub async fn count_enabled(pool: &SqlitePool) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar("SELECT COUNT(*) FROM channels WHERE status = 1")
+            .fetch_one(pool)
+            .await
+    }
 }

@@ -7,7 +7,8 @@ const ChannelsPage = lazy(() => import("./pages/ChannelsPage"));
 const ApiKeysPage = lazy(() => import("./pages/ApiKeysPage"));
 const LogsPage = lazy(() => import("./pages/LogsPage"));
 const UsagePage = lazy(() => import("./pages/UsagePage"));
-const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+// 设置中心暂时隐藏，恢复时取消注释
+// const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 
 function PageFallback() {
   return (
@@ -31,7 +32,8 @@ export default function App() {
             <Route path="channels" element={<ChannelsPage />} />
             <Route path="keys" element={<ApiKeysPage />} />
             <Route path="logs" element={<LogsPage />} />
-            <Route path="settings" element={<SettingsPage />} />
+            {/* 设置中心暂时隐藏，恢复时取消注释 */}
+            {/* <Route path="settings" element={<SettingsPage />} /> */}
           </Route>
         </Routes>
       </Suspense>

@@ -20,11 +20,15 @@ pub struct CreateLogDto {
     pub error_message: Option<String>,
     pub is_stream: bool,
     pub is_retry: bool,
+    pub request_body: Option<String>,
+    pub response_body: Option<String>,
 }
 
 /// 日志搜索 DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchLogDto {
+    /// 关键词模糊搜索（匹配 model / api_key_name / channel_name）
+    pub keyword: Option<String>,
     /// API Key ID
     pub api_key_id: Option<String>,
     /// 渠道 ID
@@ -64,5 +68,5 @@ fn default_page() -> i64 {
 }
 
 fn default_page_size() -> i64 {
-    20
+    10
 }

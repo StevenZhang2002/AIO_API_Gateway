@@ -1,68 +1,81 @@
 import { useEffect, useState, useCallback } from "react";
-import { Search, X, Clock, AlertCircle, CheckCircle2, Loader2, Eye, FileText, Filter, Hash } from "lucide-react";
-import { fetchLogs } from "../lib/api";
+import { Search, X, Clock, AlertCircle, CheckCircle2, Eye, FileText, Filter, Hash, ChevronLeft, ChevronRight } from "lucide-react";
+import { fetchLogs, fetchChannels } from "../lib/api";
 import { CHANNEL_TYPES, ALL_MODELS } from "../lib/constants";
-import type { RequestLog, LogFilter, LogStatus, ChannelType } from "../types";
+import type { RequestLog, LogFilter, PaginatedResult, Channel } from "../types";
 
-const methodBadgeCls: Record<string, string> = {
-  POST: "badge badge-bordered badge-post",
-  GET: "badge badge-bordered badge-get",
-  PUT: "badge badge-bordered badge-put",
-  DELETE: "badge badge-bordered badge-delete",
-};
+function getLogStatus(statusCode: number): "success" | "error" {
+  return statusCode >= 200 && statusCode < 300 ? "success" : "error";
+}
 
-const statusConfig: Record<LogStatus, {
-  icon: React.ComponentType<{ size?: number; className?: string }>;
-  badgeCls: string;
-  label: string;
-}> = {
+const statusConfig = {
   success: { icon: CheckCircle2, badgeCls: "badge badge-success", label: "成功" },
   error:   { icon: AlertCircle,  badgeCls: "badge badge-danger",  label: "失败" },
-  pending: { icon: Loader2,     badgeCls: "badge badge-info",    label: "处理中" },
 };
 
 export default function LogsPage() {
   const [logs, setLogs] = useState<RequestLog[]>([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [channels, setChannels] = useState<Channel[]>([]);
   const [filter, setFilter] = useState<LogFilter>({
-    keyword: "", channelType: "", model: "", status: "", dateRange: null,
+    keyword: "", channelId: "", model: "", statusCode: "", isStream: "", startTime: null, endTime: null, page: 1, pageSize: 10,
   });
   const [detailLog, setDetailLog] = useState<RequestLog | null>(null);
 
+  // 加载渠道列表（用于筛选下拉）
+  useEffect(() => {
+    fetchChannels().then(setChannels).catch(() => {});
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
-    const data = await fetchLogs(filter);
-    setLogs(data);
+    try {
+      const result: PaginatedResult<RequestLog> = await fetchLogs(filter);
+      setLogs(result.items);
+      setTotal(result.total);
+      setTotalPages(result.totalPages);
+    } catch {
+      setLogs([]);
+      setTotal(0);
+      setTotalPages(0);
+    }
     setLoading(false);
   }, [filter]);
 
   useEffect(() => { load(); }, [load]);
 
   function updateFilter<K extends keyof LogFilter>(key: K, value: LogFilter[K]) {
-    setFilter((f) => ({ ...f, [key]: value }));
+    setFilter((f) => ({ ...f, [key]: value, page: 1 }));
+  }
+
+  function goToPage(page: number) {
+    setFilter((f) => ({ ...f, page }));
   }
 
   function clearFilters() {
-    setFilter({ keyword: "", channelType: "", model: "", status: "", dateRange: null });
+    setFilter({ keyword: "", channelId: "", model: "", statusCode: "", isStream: "", startTime: null, endTime: null, page: 1, pageSize: 10 });
   }
 
-  const hasFilter = filter.keyword || filter.channelType || filter.model || filter.status || filter.dateRange;
+  const hasFilter = filter.keyword || filter.channelId || filter.model || filter.statusCode !== "" || filter.isStream !== "" || filter.startTime || filter.endTime;
 
   const activeTags: { label: string; onClear: () => void }[] = [];
   if (filter.keyword) activeTags.push({ label: `搜索: ${filter.keyword}`, onClear: () => updateFilter("keyword", "") });
-  if (filter.channelType) {
-    const ct = CHANNEL_TYPES.find((t) => t.value === filter.channelType);
-    activeTags.push({ label: `渠道: ${ct?.label ?? filter.channelType}`, onClear: () => updateFilter("channelType", "") });
+  if (filter.channelId) {
+    const ch = channels.find((c) => c.id === filter.channelId);
+    activeTags.push({ label: `渠道: ${ch?.name ?? filter.channelId}`, onClear: () => updateFilter("channelId", "") });
   }
   if (filter.model) activeTags.push({ label: `模型: ${filter.model}`, onClear: () => updateFilter("model", "") });
-  if (filter.status) activeTags.push({ label: `状态: ${statusConfig[filter.status as LogStatus]?.label ?? filter.status}`, onClear: () => updateFilter("status", "") });
+  if (filter.statusCode !== "") activeTags.push({ label: `状态码: ${filter.statusCode}`, onClear: () => updateFilter("statusCode", "") });
+  if (filter.isStream !== "") activeTags.push({ label: filter.isStream ? "流式" : "非流式", onClear: () => updateFilter("isStream", "") });
 
   return (
     <div className="page-wrap">
       <div className="page-header">
         <div>
           <h1>请求日志</h1>
-          <p>查看所有 LLM API 请求记录</p>
+          <p>查看所有 LLM API 请求记录 · 共 {total} 条</p>
         </div>
       </div>
 
@@ -75,7 +88,7 @@ export default function LogsPage() {
               type="search"
               value={filter.keyword}
               onChange={(e) => updateFilter("keyword", e.target.value)}
-              placeholder="搜索路径、模型、密钥…"
+              placeholder="搜索模型、密钥名、渠道名…"
               className="input"
               name="keyword"
               autoComplete="off"
@@ -84,15 +97,15 @@ export default function LogsPage() {
           </div>
 
           <select
-            value={filter.channelType}
-            onChange={(e) => updateFilter("channelType", e.target.value as ChannelType | "")}
+            value={filter.channelId}
+            onChange={(e) => updateFilter("channelId", e.target.value)}
             className="select"
-            name="channelType"
+            name="channelId"
             aria-label="按渠道筛选"
           >
             <option value="">全部渠道</option>
-            {CHANNEL_TYPES.map((t) => (
-              <option key={t.value} value={t.value}>{t.label}</option>
+            {channels.map((c) => (
+              <option key={c.id} value={c.id}>{c.name} ({CHANNEL_TYPES.find((t) => t.value === c.type)?.label ?? c.type})</option>
             ))}
           </select>
 
@@ -110,16 +123,31 @@ export default function LogsPage() {
           </select>
 
           <select
-            value={filter.status}
-            onChange={(e) => updateFilter("status", e.target.value as LogStatus | "")}
+            value={filter.statusCode === "" ? "" : String(filter.statusCode)}
+            onChange={(e) => updateFilter("statusCode", e.target.value === "" ? "" : Number(e.target.value))}
             className="select"
-            name="status"
-            aria-label="按状态筛选"
+            name="statusCode"
+            aria-label="按状态码筛选"
           >
             <option value="">全部状态</option>
-            <option value="success">成功</option>
-            <option value="error">失败</option>
-            <option value="pending">处理中</option>
+            <option value="200">200 成功</option>
+            <option value="400">400 错误请求</option>
+            <option value="403">403 禁止访问</option>
+            <option value="429">429 限流</option>
+            <option value="502">502 上游错误</option>
+            <option value="503">503 不可用</option>
+          </select>
+
+          <select
+            value={filter.isStream === "" ? "" : String(filter.isStream)}
+            onChange={(e) => updateFilter("isStream", e.target.value === "" ? "" : e.target.value === "true")}
+            className="select"
+            name="isStream"
+            aria-label="按流式筛选"
+          >
+            <option value="">全部模式</option>
+            <option value="true">流式</option>
+            <option value="false">非流式</option>
           </select>
 
           {hasFilter && (
@@ -177,63 +205,65 @@ export default function LogsPage() {
                       <Clock size={13} style={{ display: "inline", marginRight: 6 }} aria-hidden="true" />
                       时间
                     </th>
-                    <th>路径</th>
                     <th>渠道</th>
                     <th>模型</th>
                     <th>Token</th>
                     <th>延迟</th>
                     <th>状态</th>
+                    <th>模式</th>
                     <th className="text-right">详情</th>
                   </tr>
                 </thead>
                 <tbody>
                   {logs.map((log) => {
-                    const st = statusConfig[log.status];
+                    const status = getLogStatus(log.statusCode);
+                    const st = statusConfig[status];
                     const StatusIcon = st.icon;
                     return (
-                      <tr
-                        key={log.id}
-                        className={`row-${log.status}`}
-                      >
+                      <tr key={log.id} className={`row-${status}`}>
                         <td>
                           <span className="font-mono text-sm text-ink-muted whitespace-nowrap">
-                            {new Date(log.timestamp).toLocaleString("zh-CN", {
+                            {new Date(log.createdAt).toLocaleString("zh-CN", {
                               month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
                             })}
                           </span>
                         </td>
                         <td>
-                          <div className="flex items-center gap-2">
-                            <span className={`${methodBadgeCls[log.method] ?? "badge badge-muted"}`} style={{ fontSize: 10, padding: "1px 6px" }}>
-                              {log.method}
-                            </span>
-                            <span className="text-13 font-mono text-ink truncate" style={{ maxWidth: 160 }}>{log.path}</span>
-                          </div>
-                        </td>
-                        <td>
                           <div>
-                            <p className="text-13 text-ink-muted font-medium">{log.channelName}</p>
-                            <p className="text-sm text-ink-subtle">{CHANNEL_TYPES.find((t) => t.value === log.channelType)?.label ?? log.channelType}</p>
+                            <p className="text-13 text-ink-muted font-medium">{log.channelName ?? "—"}</p>
+                            <p className="text-sm text-ink-subtle">{log.channelName ? (CHANNEL_TYPES.find((t) => t.value === log.channelId?.replace(/-/g, ""))?.label ?? "") : ""}</p>
                           </div>
                         </td>
                         <td>
                           <span className="badge badge-muted font-mono" style={{ fontSize: 12 }}>{log.model}</span>
                         </td>
                         <td>
-                          <span className="text-13 text-ink-muted font-medium tabular-nums">{log.tokenUsage.toLocaleString()}</span>
+                          <span className="text-13 text-ink-muted font-medium tabular-nums">
+                            {log.totalTokens > 0 ? log.totalTokens.toLocaleString() : "—"}
+                          </span>
                         </td>
                         <td>
                           <span className={`text-13 font-medium tabular-nums ${
-                            log.latency > 1000 ? "text-warning" : log.latency > 500 ? "text-ink-muted" : "text-success"
+                            log.durationMs > 1000 ? "text-warning" : log.durationMs > 500 ? "text-ink-muted" : "text-success"
                           }`}>
-                            {log.latency}ms
+                            {log.durationMs}ms
                           </span>
                         </td>
                         <td>
                           <span className={st.badgeCls} style={{ gap: 4 }}>
-                            <StatusIcon size={12} className={log.status === "pending" ? "animate-spin" : ""} aria-hidden="true" />
+                            <StatusIcon size={12} aria-hidden="true" />
                             {st.label}
                           </span>
+                        </td>
+                        <td>
+                          <div className="flex items-center gap-1">
+                            <span className={`badge ${log.isStream ? "badge-info" : "badge-muted"}`} style={{ fontSize: 10, padding: "1px 6px" }}>
+                              {log.isStream ? "SSE" : "STD"}
+                            </span>
+                            {log.isRetry && (
+                              <span className="badge badge-warning" style={{ fontSize: 10, padding: "1px 6px" }}>重试</span>
+                            )}
+                          </div>
                         </td>
                         <td>
                           <div className="flex items-center justify-end">
@@ -257,6 +287,33 @@ export default function LogsPage() {
         )}
       </div>
 
+      {/* Pagination */}
+      {!loading && logs.length > 0 && (
+        <div className="flex items-center justify-between" style={{ marginTop: 16, padding: "0 4px" }}>
+          <span className="text-13 text-ink-muted">
+            第 {filter.page} / {totalPages} 页，共 {total} 条
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => goToPage(filter.page - 1)}
+              disabled={filter.page <= 1}
+              className="btn btn-icon btn-ghost"
+              aria-label="上一页"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <button
+              onClick={() => goToPage(filter.page + 1)}
+              disabled={filter.page >= totalPages}
+              className="btn btn-icon btn-ghost"
+              aria-label="下一页"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Detail Modal */}
       {detailLog && (
         <div className="modal-overlay" onClick={() => setDetailLog(null)}>
@@ -277,7 +334,7 @@ export default function LogsPage() {
               <div className="detail-grid">
                 <div>
                   <p className="detail-label">时间</p>
-                  <p className="detail-value mono">{new Date(detailLog.timestamp).toLocaleString("zh-CN")}</p>
+                  <p className="detail-value mono">{new Date(detailLog.createdAt).toLocaleString("zh-CN")}</p>
                 </div>
                 <div>
                   <p className="detail-label">状态码</p>
@@ -285,33 +342,37 @@ export default function LogsPage() {
                 </div>
                 <div>
                   <p className="detail-label">渠道</p>
-                  <p className="detail-value">{detailLog.channelName} · {CHANNEL_TYPES.find((t) => t.value === detailLog.channelType)?.label ?? detailLog.channelType}</p>
+                  <p className="detail-value">{detailLog.channelName ?? "—"}</p>
                 </div>
                 <div>
                   <p className="detail-label">模型</p>
                   <p className="detail-value mono">{detailLog.model}</p>
                 </div>
                 <div>
+                  <p className="detail-label">上游模型</p>
+                  <p className="detail-value mono">{detailLog.upstreamModel ?? "—"}</p>
+                </div>
+                <div>
                   <p className="detail-label">Token 消耗</p>
-                  <p className="detail-value tabular-nums">{detailLog.tokenUsage.toLocaleString()}</p>
+                  <p className="detail-value tabular-nums">
+                    {detailLog.totalTokens > 0
+                      ? `${detailLog.promptTokens.toLocaleString()} + ${detailLog.completionTokens.toLocaleString()} = ${detailLog.totalTokens.toLocaleString()}`
+                      : "—"}
+                  </p>
                 </div>
                 <div>
                   <p className="detail-label">延迟</p>
-                  <p className="detail-value tabular-nums">{detailLog.latency}ms</p>
+                  <p className="detail-value tabular-nums">{detailLog.durationMs}ms</p>
                 </div>
                 <div>
                   <p className="detail-label">API 密钥</p>
-                  <p className="detail-value">{detailLog.apiKeyName}</p>
+                  <p className="detail-value">{detailLog.apiKeyName ?? "—"}</p>
                 </div>
                 <div>
-                  <p className="detail-label">方法 · 路径</p>
+                  <p className="detail-label">模式</p>
                   <p className="detail-value">
-                    <span className="flex items-center gap-1">
-                      <span className={`${methodBadgeCls[detailLog.method] ?? "badge badge-muted"}`} style={{ fontSize: 10, padding: "1px 6px" }}>
-                        {detailLog.method}
-                      </span>
-                      <span className="font-mono">{detailLog.path}</span>
-                    </span>
+                    {detailLog.isStream ? "流式 (SSE)" : "非流式"}
+                    {detailLog.isRetry && " · 重试"}
                   </p>
                 </div>
               </div>
@@ -323,15 +384,17 @@ export default function LogsPage() {
                 </div>
               )}
 
-              <div>
-                <p className="detail-label mb-2"><Hash size={12} aria-hidden="true" /> 请求体</p>
-                <pre className="pre-block">{detailLog.requestBody}</pre>
-              </div>
+              {detailLog.requestBody && (
+                <div>
+                  <p className="detail-label mb-2"><Hash size={12} aria-hidden="true" /> 请求体</p>
+                  <pre className="pre-block">{(() => { try { return JSON.stringify(JSON.parse(detailLog.requestBody), null, 2); } catch { return detailLog.requestBody; } })()}</pre>
+                </div>
+              )}
 
               {detailLog.responseBody && (
                 <div>
                   <p className="detail-label mb-2"><Hash size={12} aria-hidden="true" /> 响应体</p>
-                  <pre className="pre-block">{detailLog.responseBody}</pre>
+                  <pre className="pre-block">{(() => { try { return JSON.stringify(JSON.parse(detailLog.responseBody), null, 2); } catch { return detailLog.responseBody; } })()}</pre>
                 </div>
               )}
             </div>

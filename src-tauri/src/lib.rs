@@ -13,9 +13,15 @@ use services::channel_service::ChannelService;
 use sqlx::SqlitePool;
 use tauri::{Manager, State};
 
-use crate::db::models::{ApiKey, Channel};
+use crate::db::models::{ApiKey, Channel, RequestLog};
 use crate::dto::api_key_dto::{CreateApiKeyDto, UpdateApiKeyDto};
 use crate::dto::channel_dto::{ChannelDefaultsDto, CreateChannelDto, TestChannelDto, UpdateChannelDto};
+use crate::dto::dashboard_dto::DashboardResponse;
+use crate::dto::log_dto::{PaginatedResult, SearchLogDto};
+use crate::dto::usage_dto::UsageOverviewResponse;
+use crate::db::repository::log_repo::LogRepo;
+use services::dashboard_service::DashboardService;
+use services::usage_service::UsageService;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -121,6 +127,36 @@ async fn update_api_key(pool: State<'_, SqlitePool>, dto: UpdateApiKeyDto) -> Re
         .map_err(|e| e.to_string())
 }
 
+// ==================== Log Commands ====================
+
+#[tauri::command]
+async fn search_logs(
+    pool: State<'_, SqlitePool>,
+    dto: SearchLogDto,
+) -> Result<PaginatedResult<RequestLog>, String> {
+    LogRepo::search(&*pool, dto)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// ==================== Dashboard Commands ====================
+
+#[tauri::command]
+async fn get_dashboard_stats(pool: State<'_, SqlitePool>) -> Result<DashboardResponse, String> {
+    DashboardService::get_dashboard(&*pool)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// ==================== Usage Commands ====================
+
+#[tauri::command]
+async fn get_usage_overview(pool: State<'_, SqlitePool>) -> Result<UsageOverviewResponse, String> {
+    UsageService::get_usage_overview(&*pool)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -162,6 +198,9 @@ pub fn run() {
             delete_api_key,
             get_all_api_keys,
             update_api_key,
+            search_logs,
+            get_dashboard_stats,
+            get_usage_overview,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

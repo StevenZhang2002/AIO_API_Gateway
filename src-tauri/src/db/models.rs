@@ -66,4 +66,6 @@ pub struct RequestLog {
     pub is_stream: bool,
     pub is_retry: bool,
     pub created_at: String,
+    pub request_body: Option<String>,
+    pub response_body: Option<String>,
 }
