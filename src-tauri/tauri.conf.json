@@ -13,8 +13,13 @@
     "windows": [
       {
         "title": "aio-gateway",
-        "width": 800,
-        "height": 600
+        "width": 1183,
+        "height": 600,
+        "minWidth": 1183,
+        "minHeight": 600,
+        "maxWidth": 1183,
+        "maxHeight": 600,
+        "resizable": false
       }
     ],
     "security": {
