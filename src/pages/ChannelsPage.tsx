@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { Plus, Pencil, Trash2, FlaskConical, Server, Globe, Activity, Clock } from "lucide-react";
+import { Plus, Pencil, Trash2, FlaskConical, Server, Globe, Activity } from "lucide-react";
 import {
   fetchChannels,
+  fetchChannelDefaults,
   addChannel,
   updateChannel,
   deleteChannel,
@@ -9,15 +10,17 @@ import {
   testChannel,
 } from "../lib/api";
 import { CHANNEL_TYPES, CHANNEL_DEFAULTS } from "../lib/constants";
-import type { Channel, ChannelFormData, ChannelType, ChannelTestResult } from "../types";
+import type { Channel, ChannelDefaults, ChannelFormData, ChannelType, ChannelTestResult } from "../types";
 
 const defaultForm: ChannelFormData = {
-  name: "", type: "openai", baseUrl: "", apiKey: "", models: [],
-  weight: 1, maxRetries: 3, timeout: 30000,
+  name: "", type: "openai", baseUrl: "", apiKey: "",
+  models: "[]", status: 1, priority: 0, weight: 1,
+  config: "{}", modelMapping: "{}",
 };
 
 export default function ChannelsPage() {
   const [channels, setChannels] = useState<Channel[]>([]);
+  const [defaults, setDefaults] = useState<Record<string, ChannelDefaults>>({});
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -29,8 +32,13 @@ export default function ChannelsPage() {
   const modalRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
-    const data = await fetchChannels();
+    const [data, defs] = await Promise.all([
+      fetchChannels(),
+      fetchChannelDefaults().catch(() => [] as ChannelDefaults[]),
+    ]);
     setChannels(data);
+    // 后端默认配置优先，本地 CHANNEL_DEFAULTS 兜底
+    setDefaults(Object.fromEntries(defs.map((d) => [d.channelType, d])));
     setLoading(false);
   }, []);
 
@@ -46,30 +54,56 @@ export default function ChannelsPage() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [modalOpen]);
 
+  /** 获取某渠道类型的默认配置：后端数据优先，本地 CHANNEL_DEFAULTS 兜底 */
+  function getDefaults(type: ChannelType) {
+    return defaults[type] ?? CHANNEL_DEFAULTS[type];
+  }
+
   function openAdd() {
     setEditingId(null);
-    setForm({ ...defaultForm, baseUrl: CHANNEL_DEFAULTS.openai.baseUrl });
+    setForm({ ...defaultForm, baseUrl: getDefaults("openai").baseUrl });
     setTestResult(null);
     setModalOpen(true);
   }
 
   function openEdit(ch: Channel) {
     setEditingId(ch.id);
-    setForm({ name: ch.name, type: ch.type, baseUrl: ch.baseUrl, apiKey: ch.apiKey, models: [...ch.models], weight: ch.weight, maxRetries: ch.maxRetries, timeout: ch.timeout });
+    setForm({
+      name: ch.name,
+      type: ch.type,
+      baseUrl: ch.baseUrl,
+      apiKey: ch.apiKey,
+      models: ch.models,
+      status: ch.status,
+      priority: ch.priority,
+      weight: ch.weight,
+      config: ch.config,
+      modelMapping: ch.modelMapping,
+    });
     setTestResult(null);
     setModalOpen(true);
   }
 
   function onTypeChange(type: ChannelType) {
-    const defaults = CHANNEL_DEFAULTS[type];
-    setForm((f) => ({ ...f, type, baseUrl: defaults.baseUrl, models: [...defaults.models] }));
+    const d = getDefaults(type);
+    setForm((f) => ({ ...f, type, baseUrl: d.baseUrl, models: JSON.stringify(d.models) }));
+  }
+
+  // 解析当前表单的 models
+  function getFormModels(): string[] {
+    try {
+      return JSON.parse(form.models || "[]");
+    } catch {
+      return [];
+    }
   }
 
   function toggleModel(model: string) {
-    setForm((f) => ({
-      ...f,
-      models: f.models.includes(model) ? f.models.filter((m) => m !== model) : [...f.models, model],
-    }));
+    const currentModels = getFormModels();
+    const newModels = currentModels.includes(model)
+      ? currentModels.filter((m) => m !== model)
+      : [...currentModels, model];
+    setForm((f) => ({ ...f, models: JSON.stringify(newModels) }));
   }
 
   async function handleSave() {
@@ -98,8 +132,8 @@ export default function ChannelsPage() {
     }
   }
 
-  async function handleToggle(id: string) {
-    await toggleChannel(id);
+  async function handleToggle(id: string, currentStatus: number) {
+    await toggleChannel(id, currentStatus);
     await load();
   }
 
@@ -200,12 +234,21 @@ export default function ChannelsPage() {
                     </td>
                     <td>
                       <div className="flex flex-wrap gap-1">
-                        {ch.models.slice(0, 2).map((m) => (
-                          <span key={m} className="badge badge-muted" style={{ fontSize: 11 }}>{m}</span>
-                        ))}
-                        {ch.models.length > 2 && (
-                          <span style={{ fontSize: 11, color: "var(--ink-subtle)", fontWeight: 500, marginTop: 2 }}>+{ch.models.length - 2}</span>
-                        )}
+                        {(() => {
+                          const models: string[] = (() => {
+                            try { return JSON.parse(ch.models || "[]"); } catch { return []; }
+                          })();
+                          return (
+                            <>
+                              {models.slice(0, 2).map((m) => (
+                                <span key={m} className="badge badge-muted" style={{ fontSize: 11 }}>{m}</span>
+                              ))}
+                              {models.length > 2 && (
+                                <span style={{ fontSize: 11, color: "var(--ink-subtle)", fontWeight: 500, marginTop: 2 }}>+{models.length - 2}</span>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                     </td>
                     <td>
@@ -215,8 +258,8 @@ export default function ChannelsPage() {
                       <label className="toggle-switch" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
-                          checked={ch.isActive}
-                          onChange={() => handleToggle(ch.id)}
+                          checked={ch.status === 1}
+                          onChange={() => handleToggle(ch.id, ch.status)}
                         />
                         <span className="toggle-track" />
                       </label>
@@ -317,21 +360,25 @@ export default function ChannelsPage() {
               <div>
                 <label className="text-13 font-semibold text-ink-muted" style={{ display: "block", marginBottom: 8 }}>模型选择</label>
                 <div className="flex flex-wrap gap-2">
-                  {CHANNEL_DEFAULTS[form.type].models.map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => toggleModel(m)}
-                      className={`model-btn ${form.models.includes(m) ? "active" : ""}`}
-                    >
-                      {m}
-                    </button>
-                  ))}
+                  {getDefaults(form.type).models.length === 0 ? (
+                    <p className="text-13 text-ink-subtle">该类型无预置模型，可在渠道中手动配置</p>
+                  ) : (
+                    getDefaults(form.type).models.map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => toggleModel(m)}
+                        className={`model-btn ${getFormModels().includes(m) ? "active" : ""}`}
+                      >
+                        {m}
+                      </button>
+                    ))
+                  )}
                 </div>
               </div>
 
-              {/* Grid: Weight, Retries, Timeout */}
-              <div className="grid grid-3 grid-gap-sm">
+              {/* Grid: Weight, Priority */}
+              <div className="grid grid-2 grid-gap-sm">
                 <div>
                   <label htmlFor="channel-weight" className="text-13 font-semibold text-ink-muted" style={{ display: "block", marginBottom: 6 }}>
                     <Activity size={13} style={{ display: "inline", marginRight: 4 }} aria-hidden="true" />权重
@@ -339,30 +386,18 @@ export default function ChannelsPage() {
                   <input
                     id="channel-weight"
                     name="weight"
-                    type="number" value={form.weight} min={1} max={100}
+                    type="number" value={form.weight ?? 1} min={1} max={100}
                     onChange={(e) => setForm((f) => ({ ...f, weight: Number(e.target.value) }))}
                     className="input"
                   />
                 </div>
                 <div>
-                  <label htmlFor="channel-max-retries" className="text-13 font-semibold text-ink-muted" style={{ display: "block", marginBottom: 6 }}>最大重试</label>
+                  <label htmlFor="channel-priority" className="text-13 font-semibold text-ink-muted" style={{ display: "block", marginBottom: 6 }}>优先级</label>
                   <input
-                    id="channel-max-retries"
-                    name="maxRetries"
-                    type="number" value={form.maxRetries} min={0} max={10}
-                    onChange={(e) => setForm((f) => ({ ...f, maxRetries: Number(e.target.value) }))}
-                    className="input"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="channel-timeout" className="text-13 font-semibold text-ink-muted" style={{ display: "block", marginBottom: 6 }}>
-                    <Clock size={13} style={{ display: "inline", marginRight: 4 }} aria-hidden="true" />超时
-                  </label>
-                  <input
-                    id="channel-timeout"
-                    name="timeout"
-                    type="number" value={form.timeout} min={1000} step={1000}
-                    onChange={(e) => setForm((f) => ({ ...f, timeout: Number(e.target.value) }))}
+                    id="channel-priority"
+                    name="priority"
+                    type="number" value={form.priority ?? 0} min={0} max={100}
+                    onChange={(e) => setForm((f) => ({ ...f, priority: Number(e.target.value) }))}
                     className="input"
                   />
                 </div>

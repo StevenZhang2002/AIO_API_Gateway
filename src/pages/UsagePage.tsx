@@ -12,7 +12,7 @@ function formatNumber(n: number): string {
 function AreaChart({ data }: { data: { date: string; requests: number }[] }) {
   const w = 600;
   const h = 180;
-  const pad = { top: 10, right: 8, bottom: 22, left: 8 };
+  const pad = { top: 10, right: 8, bottom: 22, left: 48 };
   const chartW = w - pad.left - pad.right;
   const chartH = h - pad.top - pad.bottom;
 
@@ -175,13 +175,13 @@ export default function UsagePage() {
           </h3>
           <div className="space-y-5">
             {data!.channelUsage.map((c, i) => (
-              <div key={c.channelName}>
+              <div key={c.channelName ?? c.channelType}>
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <div
                       style={{ width: 10, height: 10, borderRadius: "50%", background: barColors[i % barColors.length], flexShrink: 0 }}
                     />
-                    <span className="text-13 font-medium text-ink-muted">{c.channelName}</span>
+                    <span className="text-13 font-medium text-ink-muted">{c.channelName ?? "未知渠道"}</span>
                   </div>
                   <span style={{ fontSize: 12, fontWeight: 600, color: "var(--ink-soft)" }} className="tabular-nums">{c.percentage.toFixed(1)}%</span>
                 </div>

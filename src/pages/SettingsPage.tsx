@@ -2,21 +2,39 @@ import { useEffect, useState } from "react";
 import { Save, Server, Globe, Monitor, RefreshCw, Check, Shield } from "lucide-react";
 import { fetchSettings, updateSettings } from "../lib/api";
 import { RETRY_STRATEGIES } from "../lib/constants";
-import type { AppSettings, RetryStrategy } from "../types";
+import type { AppSettings, RetryStrategy, SecurityMode } from "../types";
 
-type TabKey = "service" | "general" | "ui" | "retry";
+type TabKey = "service" | "general" | "ui" | "retry" | "security";
 
 const tabs: { key: TabKey; label: string; icon: React.FC<{ size?: number }>; desc: string }[] = [
   { key: "service", label: "服务配置", icon: Server, desc: "网关监听地址与端口" },
   { key: "general", label: "通用设置", icon: Globe, desc: "常规运行参数" },
   { key: "ui", label: "界面设置", icon: Monitor, desc: "语言、主题与布局" },
   { key: "retry", label: "重试策略", icon: RefreshCw, desc: "请求失败重试配置" },
+  { key: "security", label: "安全审计", icon: Shield, desc: "安全扫描与风险防护" },
 ];
 
 const themeLabels: Record<string, string> = {
   light: "浅色",
   dark: "深色",
   system: "跟随系统",
+};
+
+const securityModeLabels: Record<SecurityMode, string> = {
+  audit: "仅审计",
+  warn: "警告",
+  redact: "脱敏",
+  confirm: "需确认",
+  block: "阻断",
+};
+
+
+const securityModeDescs: Record<SecurityMode, string> = {
+  audit: "仅记录风险，不拦截请求",
+  warn: "发现风险时发出警告",
+  redact: "自动脱敏敏感内容",
+  confirm: "需管理员确认后放行",
+  block: "直接阻断高风险请求",
 };
 
 export default function SettingsPage() {
@@ -59,7 +77,7 @@ export default function SettingsPage() {
         </div>
         <div className="flex gap-5">
           <div style={{ width: 200 }}>
-            {Array.from({ length: 4 }).map((_, i) => (
+            {Array.from({ length: 5 }).map((_, i) => (
               <div key={i} className="skeleton" style={{ height: 40, width: "100%", borderRadius: 8, marginBottom: 8 }} />
             ))}
           </div>
@@ -294,7 +312,7 @@ export default function SettingsPage() {
             {activeTab === "retry" && (
               <div className="settings-content-inner space-y-5">
                 <h3>
-                  <Shield size={18} style={{ color: "var(--primary)" }} aria-hidden="true" />
+                  <RefreshCw size={18} style={{ color: "var(--primary)" }} aria-hidden="true" />
                   重试策略
                 </h3>
 
@@ -343,6 +361,137 @@ export default function SettingsPage() {
                       onChange={(e) => update("retry", { maxDelay: Number(e.target.value) })}
                       className="input"
                     />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === "security" && (
+              <div className="settings-content-inner space-y-5">
+                <h3>
+                  <Shield size={18} style={{ color: "var(--primary)" }} aria-hidden="true" />
+                  安全审计
+                </h3>
+                <p className="subtitle">配置安全扫描引擎与风险防护策略</p>
+
+                <div className="space-y-4">
+                  {/* 总开关 */}
+                  <div className="settings-field">
+                    <label>启用安全审计</label>
+                    <div className="flex items-center">
+                      <label className="toggle-switch">
+                        <input
+                          type="checkbox"
+                          checked={settings!.security.enabled}
+                          onChange={(e) => update("security", { enabled: e.target.checked })}
+                        />
+                        <span className="toggle-track" />
+                      </label>
+                      <span role="status" aria-live="polite" style={{ marginLeft: 12, fontSize: 13, color: "var(--ink-soft)" }}>
+                        {settings!.security.enabled ? "已启用" : "已禁用"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 运行模式 */}
+                  <div className="settings-field">
+                    <label>运行模式</label>
+                    <div className="flex gap-2 flex-wrap">
+                      {(["audit", "warn", "redact", "confirm", "block"] as SecurityMode[]).map((m) => (
+                        <button
+                          key={m}
+                          onClick={() => update("security", { mode: m })}
+                          className={`model-btn ${settings!.security.mode === m ? "active" : ""}`}
+                          title={securityModeDescs[m]}
+                        >
+                          {securityModeLabels[m]}
+                        </button>
+                      ))}
+                    </div>
+                    <p style={{ fontSize: 12, color: "var(--ink-subtle)", marginTop: 8 }}>
+                      {securityModeDescs[settings!.security.mode]}
+                    </p>
+                  </div>
+
+                  {/* 扫描范围 */}
+                  <div className="settings-field">
+                    <label>扫描范围</label>
+                    <div className="space-y-3">
+                      {[
+                        { key: "scanRequest" as const, label: "扫描请求内容", desc: "检测请求体中的敏感信息" },
+                        { key: "scanResponse" as const, label: "扫描响应内容", desc: "检测响应体中的敏感信息" },
+                        { key: "scanUnicode" as const, label: "Unicode 隐写检测", desc: "检测不可见字符和零宽字符" },
+                        { key: "scanTools" as const, label: "工具/命令风险检测", desc: "检测危险命令和工具调用" },
+                        { key: "scanNetwork" as const, label: "网络风险检测", desc: "检测可疑 URL 和 IP 地址" },
+                      ].map(({ key, label, desc }) => (
+                        <div key={key} className="flex items-center justify-between" style={{ padding: "8px 12px", background: "var(--bg-soft)", borderRadius: 8 }}>
+                          <div>
+                            <p style={{ fontSize: 13, fontWeight: 500, color: "var(--ink)" }}>{label}</p>
+                            <p style={{ fontSize: 11, color: "var(--ink-subtle)" }}>{desc}</p>
+                          </div>
+                          <label className="toggle-switch">
+                            <input
+                              type="checkbox"
+                              checked={settings!.security[key]}
+                              onChange={(e) => update("security", { [key]: e.target.checked })}
+                            />
+                            <span className="toggle-track" />
+                          </label>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 防护策略 */}
+                  <div className="settings-field">
+                    <label>防护策略</label>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between" style={{ padding: "8px 12px", background: "var(--bg-soft)", borderRadius: 8 }}>
+                        <div>
+                          <p style={{ fontSize: 13, fontWeight: 500, color: "var(--ink)" }}>强制脱敏</p>
+                          <p style={{ fontSize: 11, color: "var(--ink-subtle)" }}>自动遮蔽敏感信息（如 API 密钥）</p>
+                        </div>
+                        <label className="toggle-switch">
+                          <input
+                            type="checkbox"
+                            checked={settings!.security.redactSecrets}
+                            onChange={(e) => update("security", { redactSecrets: e.target.checked })}
+                          />
+                          <span className="toggle-track" />
+                        </label>
+                      </div>
+                      <div className="flex items-center justify-between" style={{ padding: "8px 12px", background: "var(--bg-soft)", borderRadius: 8 }}>
+                        <div>
+                          <p style={{ fontSize: 13, fontWeight: 500, color: "var(--ink)" }}>Critical 强制阻断</p>
+                          <p style={{ fontSize: 11, color: "var(--ink-subtle)" }}>无视运行模式，直接阻断严重威胁</p>
+                        </div>
+                        <label className="toggle-switch">
+                          <input
+                            type="checkbox"
+                            checked={settings!.security.blockOnCritical}
+                            onChange={(e) => update("security", { blockOnCritical: e.target.checked })}
+                          />
+                          <span className="toggle-track" />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 性能保护 */}
+                  <div className="settings-field">
+                    <label htmlFor="security-max-scan-bytes">单字段最大扫描字节数</label>
+                    <input
+                      id="security-max-scan-bytes"
+                      type="number"
+                      value={settings!.security.maxScanBytes}
+                      step={1024}
+                      min={1024}
+                      onChange={(e) => update("security", { maxScanBytes: Number(e.target.value) })}
+                      className="input"
+                    />
+                    <p style={{ fontSize: 11, color: "var(--ink-subtle)", marginTop: 4 }}>
+                      超过此大小的字段将被跳过扫描，防止性能问题
+                    </p>
                   </div>
                 </div>
               </div>

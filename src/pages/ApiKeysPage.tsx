@@ -70,8 +70,8 @@ export default function ApiKeysPage() {
     }
   }
 
-  async function handleToggle(id: string) {
-    await toggleApiKeyStatus(id);
+  async function handleToggle(id: string, currentStatus: number) {
+    await toggleApiKeyStatus(id, currentStatus);
     await load();
   }
 
@@ -201,8 +201,8 @@ export default function ApiKeysPage() {
                         <label className="toggle-switch" onClick={(e) => e.stopPropagation()}>
                           <input
                             type="checkbox"
-                            checked={k.status === "active"}
-                            onChange={() => handleToggle(k.id)}
+                            checked={k.status === 1}
+                            onChange={() => handleToggle(k.id, k.status)}
                           />
                           <span className="toggle-track" />
                         </label>
